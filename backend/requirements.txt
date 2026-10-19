@@ -1,0 +1,11 @@
+flask
+flask-cors
+password-validator
+Flask-SQLAlchemy 
+psycopg[binary]
+python-dotenv
+redis
+Flask-Migrate 
+Flask-JWT-Extended 
+Flask-Limiter 
+gunicorn
