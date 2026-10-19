@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 import os
 load_dotenv()
 
-redisClient = redis.Redis(host=os.getenv('REDIS_HOST'), port=os.getenv('REDIS_PORT'), decode_responses=True)
+redisClient = redis.Redis(url=os.getenv('REDIS_URL'), decode_responses=True)
 
 if __name__ == "__main__":
     # Test the Redis connection

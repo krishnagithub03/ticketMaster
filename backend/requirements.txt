@@ -1,6 +1,5 @@
 flask
 flask-cors
-password-validator
 Flask-SQLAlchemy 
 psycopg[binary]
 python-dotenv
