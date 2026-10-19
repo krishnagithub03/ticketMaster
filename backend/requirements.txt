@@ -8,3 +8,5 @@ Flask-Migrate
 Flask-JWT-Extended 
 Flask-Limiter 
 gunicorn
+Werkzeug
+password-validator
