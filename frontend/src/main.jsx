@@ -1,9 +1,13 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   ArrowRight, CalendarDays, Check, ChevronDown, Clock3, Heart, MapPin,
   Menu, Play, Search, Star, Ticket, UserRound, X
 } from 'lucide-react';
+import {
+  ApiError, clearAccessToken, getCurrentUser, loginUser, logoutUser,
+  refreshAccessToken, registerUser
+} from './api';
 import './styles.css';
 
 const movies = [
@@ -46,6 +50,9 @@ function App() {
   const [liked, setLiked] = useState([]);
   const [toast, setToast] = useState('');
   const [location, setLocation] = useState('Pune');
+  const [currentUser, setCurrentUser] = useState(null);
+  const [authMode, setAuthMode] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const filteredMovies = useMemo(() => movies.filter((movie) =>
     `${movie.title} ${movie.genre}`.toLowerCase().includes(query.toLowerCase())
   ), [query]);
@@ -55,6 +62,57 @@ function App() {
   const notify = (message) => {
     setToast(message);
     window.setTimeout(() => setToast(''), 2400);
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    const restoreSession = async () => {
+      try {
+        const response = await getCurrentUser();
+        if (!cancelled) setCurrentUser(response?.data?.user || null);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 401) {
+          try {
+            const refreshed = await refreshAccessToken();
+            if (!cancelled) {
+              const user = await getCurrentUser();
+              setCurrentUser(user?.data?.user || null);
+              return refreshed;
+            }
+          } catch {
+            clearAccessToken();
+          }
+        }
+      } finally {
+        if (!cancelled) setAuthLoading(false);
+      }
+    };
+    restoreSession();
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleLogin = async (email, password) => {
+    const response = await loginUser(email, password);
+    setCurrentUser(response?.data?.user || null);
+    setAuthMode(null);
+    notify(`Welcome back, ${response?.data?.user?.first_name || 'there'}!`);
+  };
+
+  const handleRegister = async (details) => {
+    const response = await registerUser(details);
+    setAuthMode('login');
+    notify(response.message || 'Account created. Check your email to verify it.');
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logoutUser();
+    } catch {
+      clearAccessToken();
+    } finally {
+      setCurrentUser(null);
+      notify('You have been signed out');
+    }
   };
 
   return (
@@ -72,7 +130,12 @@ function App() {
           </div>
           <div className="top-actions">
             <button className="location-picker" onClick={() => setLocation(location === 'Pune' ? 'Mumbai' : 'Pune')}><MapPin size={16} /> {location}<ChevronDown size={14} /></button>
-            <button className="login-button" onClick={() => notify('Sign in is coming soon')}>Sign in</button>
+            {!authLoading && currentUser ? (
+              <div className="account-menu">
+                <button className="account-button" onClick={() => notify(`${currentUser.email}`)}><UserRound size={15} /> {currentUser.first_name}</button>
+                <button className="logout-button" onClick={handleLogout}>Sign out</button>
+              </div>
+            ) : <button className="login-button" onClick={() => setAuthMode('login')}>Sign in</button>}
             <button className="menu-button" onClick={() => setMenuOpen(!menuOpen)} aria-label="Open menu"><Menu size={21} /></button>
           </div>
         </div>
@@ -123,6 +186,7 @@ function App() {
 
       <footer id="about"><div className="footer-inner"><div className="brand footer-brand"><span className="brand-mark"><Ticket size={18} strokeWidth={2.5} /></span><span>ticketly<span className="brand-dot">.</span></span></div><p>Good times, made easy.</p><div className="footer-links"><a href="#about">About</a><a href="#about">Help</a><a href="#about">Terms</a><a href="#about">Privacy</a></div><small>© 2024 ticketly</small></div></footer>
       {selectedMovie && <BookingModal movie={selectedMovie} onClose={() => setSelectedMovie(null)} onBook={() => { setSelectedMovie(null); notify('Your seats are reserved!'); }} />}
+      {authMode && <AuthModal mode={authMode} onModeChange={setAuthMode} onClose={() => setAuthMode(null)} onLogin={handleLogin} onRegister={handleRegister} />}
       {toast && <div className="toast"><Check size={16} /> {toast}</div>}
     </div>
   );
@@ -136,6 +200,41 @@ function BookingModal({ movie, onClose, onBook }) {
   const [day, setDay] = useState('Today');
   const [time, setTime] = useState('07:30 PM');
   return <div className="modal-backdrop" onClick={onClose}><div className="booking-modal" onClick={(event) => event.stopPropagation()}><button className="modal-close" onClick={onClose}><X size={19} /></button><div className="modal-head"><img src={movie.image} alt="" /><div><span className="eyebrow">BOOKING FOR</span><h2>{movie.title}</h2><p>{movie.language} · {movie.format} · {movie.duration}</p></div></div><div className="booking-field"><label><CalendarDays size={16} /> Choose a day</label><div className="choice-row">{['Today', 'Tomorrow', 'Sat, 28 Sep'].map((item) => <button key={item} className={day === item ? 'selected-choice' : ''} onClick={() => setDay(item)}>{item}</button>)}</div></div><div className="booking-field"><label><Clock3 size={16} /> Select a showtime</label><div className="choice-row">{['05:00 PM', '07:30 PM', '10:15 PM'].map((item) => <button key={item} className={time === item ? 'selected-choice' : ''} onClick={() => setTime(item)}>{item}</button>)}</div></div><div className="booking-summary"><span><MapPin size={15} /> Cinepolis, Seasons Mall</span><strong>{day} · {time}</strong></div><button className="primary-button modal-book" onClick={onBook}>Continue to seats <ArrowRight size={17} /></button></div></div>;
+}
+
+function AuthModal({ mode, onModeChange, onClose, onLogin, onRegister }) {
+  const [form, setForm] = useState({ firstName: '', lastName: '', email: '', password: '' });
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const isRegister = mode === 'register';
+
+  const update = (field) => (event) => setForm({ ...form, [field]: event.target.value });
+  const submit = async (event) => {
+    event.preventDefault();
+    setError('');
+    setLoading(true);
+    try {
+      if (isRegister) await onRegister(form);
+      else await onLogin(form.email, form.password);
+    } catch (requestError) {
+      setError(requestError.message || 'Unable to complete request.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return <div className="modal-backdrop" onClick={onClose}><div className="auth-modal" onClick={(event) => event.stopPropagation()}>
+    <button className="modal-close" onClick={onClose}><X size={19} /></button>
+    <div className="auth-intro"><span className="brand-mark"><Ticket size={18} strokeWidth={2.5} /></span><p className="eyebrow">WELCOME TO TICKETLY</p><h2>{isRegister ? 'Your next story starts here.' : 'Welcome back.'}</h2><p>{isRegister ? 'Create an account to keep your plans and tickets together.' : 'Sign in to see your tickets and keep booking great nights out.'}</p></div>
+    <form onSubmit={submit} className="auth-form">
+      {isRegister && <div className="name-fields"><label>First name<input value={form.firstName} onChange={update('firstName')} required autoComplete="given-name" /></label><label>Last name<input value={form.lastName} onChange={update('lastName')} required autoComplete="family-name" /></label></div>}
+      <label>Email<input type="email" value={form.email} onChange={update('email')} required autoComplete="email" /></label>
+      <label>Password<input type="password" value={form.password} onChange={update('password')} required minLength={8} autoComplete={isRegister ? 'new-password' : 'current-password'} /></label>
+      {error && <p className="auth-error">{error}</p>}
+      <button className="primary-button auth-submit" disabled={loading}>{loading ? 'Please wait…' : isRegister ? 'Create account' : 'Sign in'} <ArrowRight size={16} /></button>
+    </form>
+    <p className="auth-switch">{isRegister ? 'Already have an account?' : 'New to ticketly?'} <button onClick={() => { setError(''); onModeChange(isRegister ? 'login' : 'register'); }}>{isRegister ? 'Sign in' : 'Create an account'}</button></p>
+  </div></div>;
 }
 
 createRoot(document.getElementById('root')).render(<App />);
