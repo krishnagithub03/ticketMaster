@@ -77,3 +77,11 @@ class User(db.Model):
         db.DateTime(timezone=True),
         nullable=True
     )
+    email_verification_token_hash = db.Column(
+        db.String(64),
+        nullable=True
+    )
+    email_verification_expires_at = db.Column(
+        db.DateTime(timezone=True),
+        nullable=True
+    )
