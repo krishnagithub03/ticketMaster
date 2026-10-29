@@ -29,4 +29,30 @@ def send_verification_email(recipient_email, verification_token):
     except Exception as e:
         print(f"Error sending email: {e}")
         raise Exception("Unable to send email, please try again") from e
-    
+
+def send_password_reset_email(recipient_email, reset_token):
+    #safe token parse 
+    token_provided = urllib.parse.urlencode({
+    "token": reset_token
+    })
+    reset_url = (
+    f"{current_app.config['FRONTEND_ORIGIN']}/reset-password?{token_provided}"
+    )
+    # Create the email message
+    msg = Message(
+        subject="Reset your password | Ticketmaster",
+        sender=current_app.config["MAIL_DEFAULT_SENDER"],
+        recipients=[recipient_email],
+        body=(
+            "You requested a password reset. Please use the link below to reset your password:\n\n"
+            f"{reset_url}\n\n"
+            "This link expires in 15 minutes. "
+            "If you did not request a password reset, you can ignore this email."
+        )
+    )
+    # Send the email
+    try:
+        mail.send(msg)
+    except Exception as e:
+        print(f"Error sending email: {e}")
+        raise Exception("Unable to send email, please try again") from e

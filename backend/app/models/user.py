@@ -85,3 +85,18 @@ class User(db.Model):
         db.DateTime(timezone=True),
         nullable=True
     )
+    password_reset_token_hash = db.Column(
+        db.String(256),
+        nullable=True
+    )
+    password_reset_expires_at = db.Column(
+        db.DateTime(timezone=True),
+        nullable=True
+    )
+    token_version = db.Column(
+        db.Integer,
+        default=0,
+        nullable=False
+    )
+
+    bookings = db.relationship("Booking", back_populates="user")

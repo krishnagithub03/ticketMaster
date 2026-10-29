@@ -12,3 +12,4 @@ gunicorn
 Werkzeug
 password-validator
 Flask-Mail
+flasgger

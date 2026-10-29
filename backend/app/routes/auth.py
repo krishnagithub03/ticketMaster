@@ -8,7 +8,7 @@ import hashlib
 import math
 from app.utils.emailVerification import generate_verification_token, get_token_expiration
 from datetime import datetime, timezone
-from app.utils.emailSender import send_verification_email
+from app.utils.emailSender import send_password_reset_email, send_verification_email
 from sqlalchemy.exc import IntegrityError
 from flask_jwt_extended import (create_access_token, 
 create_refresh_token, 
@@ -254,8 +254,8 @@ def login():
         db.session.rollback()
         return jsonify({"message" : "Unable to login, please try again later"}), 500
     # 6. Generate access and refresh tokens
-    access_token = create_access_token(identity=user.id)
-    refresh_token = create_refresh_token(identity=user.id)
+    access_token = create_access_token(identity=user.id, additional_claims={"token_version" : user.token_version})
+    refresh_token = create_refresh_token(identity=user.id, additional_claims={"token_version" : user.token_version})
     # 7. Return the response
 
     response = {
@@ -490,6 +490,7 @@ def change_password():
         return jsonify({"message": "New password cannot be the same as the current password"}), 400
     # hash the new password and save it
     user.password_hash = hash_password(new_password)
+    user.token_version += 1  # Increment token version to invalidate existing tokens
     try:
         db.session.commit()
     except Exception as e:
@@ -513,7 +514,64 @@ def forgot_password():
         return jsonify({"message": email_message}), 400
     # 2. Look up the account
     user = User.query.filter_by(email=email).first()
+    if not user:
+        return jsonify({"message": "User not found"}), 404
+    if user.status != AccountStatus.ACTIVE:
+        return jsonify({"message": "Account inactive, please verify the email to login"}), 401
     # 3. Generate a secure reset token and store its hash
+    token, token_hash = generate_verification_token()
+    user.password_reset_token_hash = token_hash
+    user.password_reset_expires_at = get_token_expiration()
     # 4. Send the password-reset email
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"message": "Unable to save password reset token, please try again later"}), 500
+    try:
+        send_password_reset_email(email, token)
+    except Exception as e:
+        return jsonify({"message": "Unable to send password reset email, please try again later"}), 503
     # 5. Return a generic response
-    pass
+    return jsonify({"message": "Password reset email sent."}), 200
+
+@auth_bp.route("/reset-password", methods=["POST"])
+def reset_password():
+     # 1. Validate token and new_password
+    request_data = request.get_json()
+    if not request_data or not isinstance(request_data, dict):
+        return jsonify({"message": "Invalid request data"}), 400
+    input_token = request_data.get("token")
+    if not input_token:
+        return jsonify({"message" : "token not found, provide token to change password"}), 400
+    if not isinstance(input_token, str) or not input_token.strip():
+        return jsonify({"message" : "provide token in valid format"}), 400
+    new_password = request_data.get('new_password')
+    if not isinstance(new_password,str) or not new_password.strip():
+        return jsonify({"message" : "provide password in valid format"}), 400
+    password_check =  check_password(new_password).get_json()
+    if not password_check.get("is_valid"):
+        return jsonify({"message" : f'Password is weak, {password_check.get("errors")}'}), 400
+    # 2. Hash the supplied token and find the user
+    input_token_hash = hashlib.sha256(input_token.encode("utf-8")).hexdigest()
+    user = User.query.filter_by(password_reset_token_hash=input_token_hash).first()
+    if not user:
+        return jsonify({"message" : "Invalid or expired token provided"}), 400
+    # 3. Check token expiration
+    current_time = datetime.now(timezone.utc)
+    if (user.password_reset_expires_at is None or current_time >= user.password_reset_expires_at):
+        return jsonify({"message" : "token expired, try again"}), 400
+    # 5. Hash and update the password
+    user.password_hash = hash_password(new_password)
+    # 6. Clear the reset token fields
+    user.password_reset_token_hash = None
+    user.password_reset_expires_at = None
+    user.token_version += 1  # Increment token version to invalidate existing tokens
+    # 7. Commit and return success
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"message" : "An error occurred while resetting the password. Please try again."}), 500
+    return jsonify({"message" : "Password reset successfully"}), 200
+
